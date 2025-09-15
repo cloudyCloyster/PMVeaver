@@ -996,12 +996,16 @@ def build_montage(
         import librosa
 
         y, sr = librosa.load(str(audio_path), sr=None, mono=True)
-        # RMS Energie pro Frame (z. B. 2048 Samples Fenster)
+        # RMS energy per frame window
         rms = librosa.feature.rms(y=y, frame_length=2048, hop_length=512)[0]
         times = librosa.frames_to_time(np.arange(len(rms)), sr=sr, hop_length=512)
 
-        # Normalisieren 0..1
+        # Normalize 0..1
         rms /= rms.max()
+        scale = np.percentile(rms, 95)
+        if scale > 0:
+            rms /= scale
+            rms = np.clip(rms, 0, 1)
 
         def volume_at(t: float) -> float:
             tt = t + (beat_offset or 0.0)
@@ -1010,40 +1014,69 @@ def build_montage(
             if idx >= len(rms): return float(rms[-1])
             return float(rms[idx])
 
+        def peak_intensity(t: float, delta: float = 0.05, max_diff: float = 0.5) -> float:
+            if t - delta <= 0:
+                return 0
+
+            center = volume_at(t)
+            before = volume_at(t - delta)
+            after = volume_at(t + delta)
+
+            neighbor_max = max(before, after)
+            diff = center - neighbor_max
+            if diff <= 0:
+                return 0.0
+            intensity = diff / max_diff
+            return min(1.0, intensity)
+
         beat_len = 60.0 / effective_bpm
 
-        def _pulse_intensity(t: float) -> float:
+        def _beat_intensity(t: float) -> float:
             ph = (max(0.0, t) % beat_len) / beat_len
-            return math.exp(-PULSE_DECAY * ph)
+            intensity_bpm = math.exp(-PULSE_DECAY * ph)
+            intensity_vol = volume_at(t)
 
-        def _pulse_frame(get_frame, t: float):
-            frame = get_frame(t)  # np.uint8 (H,W,3) oder (H,W,4) / Maske wäre (H,W)
+            return (intensity_bpm + intensity_vol) / 2
 
-            beat_factor = _pulse_intensity(t)  # 0..1 aus BPM-Phase
-
+        def _vol_intensity(t: float) -> float:
             vol_sum = 0
             for ti in range(round(t - fps), round(t)):
                 vol_sum += volume_at(t)
             vol_factor = vol_sum / fps
+            vol_factor = vol_factor ** 2
+            return vol_factor
 
-            inten = beat_factor * (0.1 + vol_factor * 2)
+        def _normalize_intensity(i):
+            a = 0.82
+            k = 10.0
+            x0 = 0.62
+            b = 0.2
+            c = -0.002
+            return a / (1 + np.exp(-k * (i - x0))) + b * i + c
 
-            if inten <= 1e-6:
+        def _pulse_frame(get_frame, t: float):
+            beat_factor = _beat_intensity(t)
+            vol_factor = _vol_intensity(t)
+            intensity_peak = peak_intensity(t)
+
+            intensity = _normalize_intensity(beat_factor * ((vol_factor + intensity_peak * 0.5) / 1.5) * 2.5)
+
+            frame = get_frame(t)
+
+            if intensity <= 1e-6:
                 return frame
 
-            # Maße des *aktuellen* Frames verwenden
             h, w = frame.shape[:2]
-            scale = 1.0 + PULSE_ZOOM_MAX * inten
+            scale = 1.0 + PULSE_ZOOM_MAX * intensity
             crop_w = max(1, int(round(w / scale)))
             crop_h = max(1, int(round(h / scale)))
 
-            # zentrierte Crop-Box, strikt einklemmen
             x1 = max(0, (w - crop_w) // 2)
             y1 = max(0, (h - crop_h) // 2)
             x2 = min(w, x1 + crop_w)
             y2 = min(h, y1 + crop_h)
             if x2 <= x1 or y2 <= y1:
-                return frame  # Sicherheitsnetz
+                return frame
 
             # Slicing + contiguous machen (PIL liebt contiguous)
             cropped = _np.ascontiguousarray(frame[y1:y2, x1:x2])
@@ -1053,7 +1086,7 @@ def build_montage(
             img = img.resize((w, h), resample=Image.BICUBIC)
 
             # leichter Blur am Beat
-            blur_radius = PULSE_BLUR_MAX * inten
+            blur_radius = PULSE_BLUR_MAX * intensity ** 2
             if blur_radius > 0.05:
                 img = img.filter(ImageFilter.GaussianBlur(radius=blur_radius))
 
@@ -1375,19 +1408,19 @@ def _parse_videos_spec(spec: str, bpm: Optional[float], audio_duration: float,
 
     required_clips = calc_required_clips()
 
-    # Redgifs-Download-Funktion (Platzhalter)
+    # RedGIFs-Download-Funktion (Platzhalter)
     def download_redgifs_to_tempfolder(search_term: str, count: int) -> Path:
         from redgifs import API, errors
         api = API()
         api.login()
         tmpdir = Path(tempfile.mkdtemp(prefix="pmv_rg_"))
 
-        print(f"PMVeaver - Trying to download {count} redgif clips for query \"{search_term}\" to temp folder \"{tmpdir}\"")
+        print(f"PMVeaver - Trying to download {count} RedGIFs clips for query \"{search_term}\" to temp folder \"{tmpdir}\"")
 
         actual_count = 0
         result_count = 80
         try:
-            for i in tqdm(range(count), desc=f"Downloading Redgifs \"{search_term}\"", unit="clip", ncols=result_count):
+            for i in tqdm(range(count), desc=f"Downloading RedGIFs \"{search_term}\"", unit="clip", ncols=result_count):
                 try:
                     if search_term.startswith("user:"):
                         username = search_term[len("user:"):]
@@ -1412,7 +1445,7 @@ def _parse_videos_spec(spec: str, bpm: Optional[float], audio_duration: float,
                         actual_count += 1
                 except errors.HTTPException as he:
                     if he.status == 429:
-                        print(f"PMVeaver - Rate limit hit when downloading Redgifs for \"{search_term}\"")
+                        print(f"PMVeaver - Rate limit hit when downloading RedGIFs for \"{search_term}\"")
                         break
                     else:
                         print(f"PMVeaver - HTTP error during download: {he}")
@@ -1422,10 +1455,7 @@ def _parse_videos_spec(spec: str, bpm: Optional[float], audio_duration: float,
                     break
         finally:
             api.close()
-
-            print(f"PMVeaver - Downloaded {actual_count} redgif clips for query \"{search_term}\"")
-
-            api.close()
+            print(f"PMVeaver - Downloaded {actual_count} RedGIFs clips for query \"{search_term}\"")
             return tmpdir
 
     for raw in (spec or "").split(","):
