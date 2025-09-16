@@ -1259,7 +1259,7 @@ def build_montage(
         if vf_graph:
             ffparams += ["-vf", vf_graph]
             # Für breite Player-Kompatibilität (besonders bei LUTs) 8-bit YUV ausgeben:
-            ffparams += ["-pix_fmt", "yuv420p"]
+            ffparams += ["-pix_fmt", "yuv444p"]
 
         montage_with_preview.write_videofile(
             str(out_path),
