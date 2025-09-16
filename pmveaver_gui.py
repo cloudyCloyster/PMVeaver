@@ -298,6 +298,14 @@ class PMVeaverQt(QtWidgets.QWidget):
         self.icon_font = QtGui.QFont(family)
         self.icon_font.setPointSize(18)
 
+        checkbox_style = """
+        QCheckBox:hover {
+            text-decoration: none;
+            border: none;
+        }
+        """
+        self.setStyleSheet(checkbox_style)
+
         self.console_win = ConsoleWindow()
 
         def gui_print(*args, **kwargs):
@@ -350,10 +358,12 @@ class PMVeaverQt(QtWidgets.QWidget):
         main_split.addSpacing(16)
 
         left_box = QtWidgets.QVBoxLayout()
+        left_box.setSpacing(16)
 
         # ----- Sources / Output
         src_group = QtWidgets.QGroupBox("Sources / Output")
-        src_form = QtWidgets.QGridLayout(src_group)
+        src_group_content = QtWidgets.QWidget(src_group)
+        src_form = QtWidgets.QGridLayout(src_group_content)
 
         self.ed_audio = FileDropLineEdit()
         self.ed_audio.editingFinished.connect(self._autofill_output_from_audio)
@@ -369,6 +379,7 @@ class PMVeaverQt(QtWidgets.QWidget):
 
         src_form.addWidget(QtWidgets.QLabel("Source folders:"), 2, 0)
         self.videos_container = QtWidgets.QWidget()
+        self.videos_container.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Maximum)
         self.videos_layout = QtWidgets.QVBoxLayout(self.videos_container)
         self.videos_layout.setContentsMargins(0, 0, 0, 0)
         self.videos_layout.setSpacing(6)
@@ -378,38 +389,62 @@ class PMVeaverQt(QtWidgets.QWidget):
 
         src_form.addWidget(self.videos_container,             2, 1, 1, 2)
 
+        src_form.addItem(QtWidgets.QSpacerItem(0, 20), 3, 0)
+
+        src_form.addWidget(QtWidgets.QLabel("Forced clips:"), 4, 0)
+        self.forced_clips_container = QtWidgets.QWidget()
+        self.forced_clips_container.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Maximum)
+        self.forced_clips_layout = QtWidgets.QVBoxLayout(self.forced_clips_container)
+        self.forced_clips_layout.setContentsMargins(0, 0, 0, 0)
+        self.forced_clips_layout.setSpacing(6)
+
+        self.forced_clips_rows: list[dict] = []
+        self._add_forced_clip_row()
+
+        src_form.addWidget(self.forced_clips_container,             4, 1, 1, 2)
+
+        src_form.addItem(QtWidgets.QSpacerItem(0, 20), 5, 0)
+
         self.chk_trim = QtWidgets.QCheckBox("Trim long clips")
-        src_form.addWidget(self.chk_trim, 3, 1)
+        src_form.addWidget(self.chk_trim, 6, 1)
 
-        src_form.addItem(QtWidgets.QSpacerItem(0, 20), 4, 0)
+        src_form.addItem(QtWidgets.QSpacerItem(0, 20), 7, 0)
 
 
-        src_form.addWidget(QtWidgets.QLabel("Output file:"),  5, 0)
+        src_form.addWidget(QtWidgets.QLabel("Output file:"),  8, 0)
         self.ed_output = FileDropLineEdit()
-        src_form.addWidget(self.ed_output,                    5, 1)
+        src_form.addWidget(self.ed_output,                    8, 1)
         btn_output = self.IconButton("\uf17f")
         btn_output.clicked.connect(self._browse_output)
-        src_form.addWidget(btn_output,                        5, 2)
+        src_form.addWidget(btn_output,                        8, 2)
 
-        src_form.addItem(QtWidgets.QSpacerItem(0, 20), 6, 0)
+        src_form.addItem(QtWidgets.QSpacerItem(0, 20), 9, 0)
 
-        src_form.addWidget(QtWidgets.QLabel("Intro file:"),  7, 0)
+        src_form.addWidget(QtWidgets.QLabel("Intro file:"),  10, 0)
         self.ed_intro = FileDropLineEdit()
-        src_form.addWidget(self.ed_intro,                    7, 1)
+        src_form.addWidget(self.ed_intro,                    10, 1)
         btn_intro = self.IconButton("\ueb87")
         btn_intro.clicked.connect(self._browse_intro)
-        src_form.addWidget(btn_intro,                        7, 2)
+        src_form.addWidget(btn_intro,                        10, 2)
 
-        src_form.addWidget(QtWidgets.QLabel("Outro file:"),  8, 0)
+        src_form.addWidget(QtWidgets.QLabel("Outro file:"),  11, 0)
         self.ed_outro = FileDropLineEdit()
-        src_form.addWidget(self.ed_outro,                    8, 1)
+        src_form.addWidget(self.ed_outro,                    11, 1)
         btn_outro = self.IconButton("\ueb87")
         btn_outro.clicked.connect(self._browse_outro)
-        src_form.addWidget(btn_outro,                        8, 2)
+        src_form.addWidget(btn_outro,                        11, 2)
 
-        left_box.addWidget(src_group)
+        src_scrollarea = QtWidgets.QScrollArea()
+        src_scrollarea.setWidgetResizable(True)
+        src_scrollarea.setWidget(src_group_content)
+        src_scrollarea.setFrameShape(QtWidgets.QFrame.NoFrame)
+        src_scrollarea.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
 
-        left_box.addStretch(1)
+        vbox = QtWidgets.QVBoxLayout(src_group)
+        vbox.setContentsMargins(8, 8, 8, 8)
+        vbox.addWidget(src_scrollarea)
+
+        left_box.addWidget(src_group, 1)
 
         # ----- Progress
         prog_group = QtWidgets.QGroupBox("Progress")
@@ -575,7 +610,7 @@ class PMVeaverQt(QtWidgets.QWidget):
         main_split.addItem(QtWidgets.QSpacerItem(8, 0))
 
         # automatic size
-        self.resize(1360, 640)
+        self.resize(1360, 800)
         self.setMinimumWidth(1360)
 
         self._check_ffmpeg()
@@ -1424,6 +1459,60 @@ class PMVeaverQt(QtWidgets.QWidget):
 
         ed_path.textChanged.connect(_maybe_append_new)
 
+    def _add_forced_clip_row(self):
+        """
+        Adds a row: [Path-QLineEdit][Browse…][Weight-QLineEdit ('1' implicit)]
+        Auto-append: As soon as the last row gets a path, a new empty row is created.
+        """
+        row_w = QtWidgets.QWidget()
+        h = QtWidgets.QHBoxLayout(row_w)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(6)
+
+        ed_path = DirDropLineEdit()
+        ed_path.setPlaceholderText("Video or image path")
+
+        btn_browse = self.IconButton("\ueb87")
+
+        ed_time = QtWidgets.QLineEdit()
+        ed_time.setFixedWidth(60)
+
+        # Distribute stretch so that path field is wide
+        ed_path.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+
+        h.addWidget(ed_path, 1)
+        h.addWidget(QtWidgets.QLabel("Time:"), 0)
+        h.addWidget(ed_time, 0)
+        h.addWidget(btn_browse, 0)
+
+        # Keep row object in list
+        row_obj = {"w": row_w, "path": ed_path, "time": ed_time, "btn": btn_browse}
+        self.forced_clips_rows.append(row_obj)
+        self.forced_clips_layout.addWidget(row_w)
+
+        # Browse handler (for this row)
+        def _browse_this_row():
+            start_dir = _norm(ed_path.text().strip()) or _norm(os.getcwd())
+            f, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select video or image file", start_dir,
+                                                     "Video file (*.mp4 *.mov *.m4v *.mkv *.avi *.webm *.mpg *.gif);;Image file (*.jpg *.jpeg *.png *.bmp *.webp);;All files (*.*)")
+            if f:
+                ed_path.setText(_norm(f))
+
+            self._validate_inputs(False)
+
+        btn_browse.clicked.connect(_browse_this_row)
+
+        # Auto-append when last row is filled
+        def _maybe_append_new(v: str):
+            # react only if this is the *last* row
+            if row_obj is self.forced_clips_rows[-1]:
+                if v.strip():
+                    # but only if no empty trailing row exists yet
+                    self._add_forced_clip_row()
+            self._validate_inputs(False)
+
+        ed_path.textChanged.connect(_maybe_append_new)
+
     def _iter_filled_video_rows(self):
         """
         Generator over filled path rows (path ≠ empty).
@@ -1438,6 +1527,41 @@ class PMVeaverQt(QtWidgets.QWidget):
             w = int(wt) if wt else 1
             yield (p, w, wt)
 
+    def parse_time_to_seconds(self, time_str: str) -> int:
+        """
+        Parse a time string of format H:M:S or M:S or S into total seconds.
+        Example: "1:10" -> 70, "2:01:03" -> 7263
+        """
+        parts = time_str.split(':')
+        try:
+            parts = [int(p) for p in parts]
+        except ValueError:
+            raise ValueError("Invalid time format, must be numbers separated by ':'")
+
+        if len(parts) == 1:
+            return parts[0]  # seconds only
+        elif len(parts) == 2:
+            return parts[0] * 60 + parts[1]  # minutes:seconds
+        elif len(parts) == 3:
+            return parts[0] * 3600 + parts[1] * 60 + parts[2]  # hours:minutes:seconds
+        else:
+            raise ValueError("Invalid time format, too many ':'")
+
+    def _iter_filled_forced_clip_rows(self):
+        for r in self.forced_clips_rows:
+            p = r["path"].text().strip()
+            if not p:
+                continue
+            p = _norm(p)
+            t = r["time"].text().strip()
+            if not t:
+                continue
+            try:
+                t_sec = self.parse_time_to_seconds(t)
+            except Exception:
+                continue
+            yield (p, str(t_sec))
+
     def _build_videos_arg(self) -> str:
         """
         Builds the single string for --videos:
@@ -1450,6 +1574,15 @@ class PMVeaverQt(QtWidgets.QWidget):
                 parts.append(p)
             else:
                 parts.append(f"{p}:{w}")
+        return ",".join(parts)
+
+    def _build_forced_clips_arg(self) -> str:
+        """
+        Builds the single string for --forced-clips
+        """
+        parts = []
+        for p, t in self._iter_filled_forced_clip_rows():
+            parts.append(f"{p}:{t}")
         return ",".join(parts)
 
     def _set_video_rows_from_guess(self, guess_path: str | None):
@@ -2220,6 +2353,10 @@ class PMVeaverQt(QtWidgets.QWidget):
 
         if self.chk_seed.isChecked():
             args += ["--seed", str(self.ed_seed.value())]
+
+        forced_clips = self._build_forced_clips_arg()
+        if forced_clips:
+            args += ["--forced-clips", forced_clips]
 
         return args
 

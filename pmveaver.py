@@ -126,7 +126,6 @@ class ProbeInfo:
 
     @property
     def is_portrait(self) -> bool:
-        # rotation-bereinigte Orientierung ist bereits in width/height enthalten
         return self.height > self.width
 
 def ffprobe_video_info(path: Path) -> ProbeInfo:
@@ -194,6 +193,12 @@ def probe_image_info(path: Path) -> ProbeInfo:
         w, h = img.size
     return ProbeInfo(width=w, height=h, rotation=0, duration=10.0)
 
+def probe_file_info(path: Path) -> ProbeInfo:
+    ext = path.suffix.lower()
+    if ext in IMAGE_EXTS:
+        return probe_image_info(path)
+    return ffprobe_video_info(path)
+
 def build_probe_cache(files: List[Path], max_workers: Optional[int] = None) -> Dict[Path, ProbeInfo]:
     cache: Dict[Path, ProbeInfo] = {}
     if not files:
@@ -201,14 +206,8 @@ def build_probe_cache(files: List[Path], max_workers: Optional[int] = None) -> D
 
     workers = max_workers or max(1, (min(16, os.cpu_count()) or 4))
 
-    def _probe(path: Path) -> ProbeInfo:
-        ext = path.suffix.lower()
-        if ext in IMAGE_EXTS:
-            return probe_image_info(path)
-        return ffprobe_video_info(path)
-
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        future_map = {ex.submit(_probe, p): p for p in files}
+        future_map = {ex.submit(probe_file_info, p): p for p in files}
         for fut in as_completed(future_map):
             p = future_map[fut]
             try:
@@ -786,6 +785,7 @@ def build_montage(
     contrast: float,
     saturation: float,
     lut: Optional[Path],
+    forced_clips_spec: Optional[str],
 ):
     setup_tempfile_cleanup(out_path)
 
@@ -868,16 +868,44 @@ def build_montage(
 
     final_segment_start = max(0.0, target_duration - endhold_duration)
 
+    forced_clips = _parse_forced_clips_spec(forced_clips_spec)
+    forced_index = 0
+
     while total < target_duration + 0.01:
         try:
-            choice = _rng.choice(["landscape", "portrait"])
+            forced_clip_path: Optional[Path] = None
+
+            if effective_bpm:
+                delta = min_beats * 60.0 / effective_bpm
+            else:
+                delta = min_seconds
+
+            if forced_clips and forced_index < len(forced_clips) and total >= forced_clips[forced_index][1] - delta:
+                forced_clip_path = forced_clips[forced_index][0]
+                info = probe_file_info(forced_clip_path)
+                probe_cache.update({ forced_clip_path: info })
+
+                if info.is_portrait:
+                    choice = "portrait"
+                else:
+                    choice = "landscape"
+
+                forced_index += 1
+            else:
+                choice = _rng.choice(["landscape", "portrait"])
 
             if choice == "landscape":
-                src_path = next_landscape()
+                if forced_clip_path:
+                    src_path = forced_clip_path
+                else:
+                    src_path = next_landscape()
+
                 if src_path is None:
+                    print("NONE")
                     continue
 
                 info = probe_cache.get(src_path)
+
                 if not info or info.width <= 0 or info.height <= 0 or info.duration <= 0:
                     continue
                 try:
@@ -908,12 +936,16 @@ def build_montage(
                 total += filled.duration
 
             else:  # choice == "portrait"
+                if forced_clip_path:
+                    pathA = forced_clip_path
+                else:
+                    pathA = next_portrait()
+
+                if pathA is None:
+                    continue
+
                 # Reuse previous side as current center with given probability
                 if carry_portrait_path is not None and _rng.random() < triptych_carry:
-                    pathA = next_portrait()
-                    if pathA is None:
-                        continue
-
                     # avoid A == B (otherwise all three panels would be the same source)
                     if pathA == carry_portrait_path:
                         alt = next_portrait()
@@ -922,9 +954,6 @@ def build_montage(
                     pathB = carry_portrait_path
 
                 else:
-                    pathA = next_portrait()
-                    if pathA is None:
-                        continue
                     pathB = next_portrait()
                     if pathB is None:
                         continue
@@ -1404,7 +1433,7 @@ def start_stdin_exit_watcher(token: str = "__PMVEAVER_EXIT__"):
     threading.Thread(target=_runner, daemon=True).start()
 
 def _parse_videos_spec(spec: str, bpm: Optional[float], audio_duration: float,
-                      min_seconds: float, max_seconds: float, min_beats: int, max_beats: int) -> List[Tuple[Path, int]]:
+                      min_seconds: float, max_seconds: float, min_beats: int, max_beats: int) -> Tuple[List[Tuple[Path, int]], List[Path]]:
     out = []
     temp_dirs = []
 
@@ -1489,6 +1518,24 @@ def _parse_videos_spec(spec: str, bpm: Optional[float], audio_duration: float,
             out.append((temp_dir, w))
 
     return out, temp_dirs
+
+def _parse_forced_clips_spec(spec: str) -> List[Tuple[Path, int]]:
+    out = []
+
+    for raw in (spec or "").split(","):
+        part = raw.strip().strip('"').strip("'")
+        if not part:
+            continue
+        d, w = part, 1
+        if ":" in part:
+            head, tail = part.rsplit(":", 1)
+            if tail.isdigit():
+                d, w = head.strip(), int(tail)
+        p = Path(d).expanduser()
+        if p.exists():
+            out.append((p, w))
+
+    return sorted(out, key=lambda tup: tup[1])
 
 def _build_weighted_pools(
     specs: List[Tuple[Path, int]],
@@ -1657,7 +1704,7 @@ def parse_args(argv=None):
         "--videos",
         type = str,
         required = True,
-        help = "Path to video files or search query fpr redgifs. Allows for multiple entries with weigths: "
+        help = "Paths to video files or search query fpr redgifs. Allows for multiple entries with weigths: "
         '"ENTRY[:weight],ENTRY[:weight],..."  (z.B. "cats:1,dogs:2"). '
         "Without ':weight' = 1."
         )
@@ -1714,6 +1761,13 @@ def parse_args(argv=None):
         type=int,
         help="Seed for deterministic random number generator."
     )
+
+    p.add_argument(
+        "--forced-clips",
+        type = str,
+        help = "Paths to forced video files. Allows for multiple entries with time indices in seconds: "
+        '"ENTRY[:time],ENTRY[:time],..."'
+        )
 
     args = p.parse_args(argv)
 
@@ -1827,6 +1881,7 @@ def main(argv=None):
             contrast=args.contrast,
             saturation=args.saturation,
             lut=args.lut,
+            forced_clips_spec=args.forced_clips
         )
 
     except Exception as e:
