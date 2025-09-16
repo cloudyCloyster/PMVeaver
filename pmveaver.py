@@ -861,6 +861,13 @@ def build_montage(
     default_w = width or 1920
     default_h = height or 1080
 
+    if effective_bpm:
+        endhold_duration = 8 * 60.0 / effective_bpm  # 8 Beats am Schluss
+    else:
+        endhold_duration = 8.0  # z.B. 8 Sekunden als Default
+
+    final_segment_start = max(0.0, target_duration - endhold_duration)
+
     while total < target_duration + 0.01:
         try:
             choice = _rng.choice(["landscape", "portrait"])
@@ -879,9 +886,15 @@ def build_montage(
                     print(f"Warning: failed to open {src_path}: {e}", file=sys.stderr)
                     continue
 
-                start, end = compute_segment_bounds(
-                    src.duration, effective_bpm, min_beats, max_beats, beat_mode, min_seconds, max_seconds, fps, trim_large_clips
-                )
+                if total >= final_segment_start:
+                    start, end = compute_segment_bounds(
+                        src.duration, effective_bpm, 8, 8, beat_mode, 8, 8, fps, trim_large_clips
+                    )
+                else:
+                    start, end = compute_segment_bounds(
+                        src.duration, effective_bpm, min_beats, max_beats, beat_mode, min_seconds, max_seconds, fps, trim_large_clips
+                    )
+
                 if end <= start:
                     continue
                 sub = src.subclip(start, end)
