@@ -900,7 +900,7 @@ def build_montage(
                 sub = src.subclip(start, end)
 
                 if isinstance(sub, ImageClip):
-                    filled = kenburns_cover(sub, default_w, default_h, dur=sub.duration, rng=_rng)
+                    filled = kenburns_cover(sub, default_w, default_h, dur=sub.duration)
                 else:
                     filled = cover_scale_and_crop(sub, default_w, default_h)
 
