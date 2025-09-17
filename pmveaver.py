@@ -76,7 +76,7 @@ from PIL import Image as _PIL_Image
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-__version__ = "1.4.1"
+__version__ = "1.5.0"
 
 VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm", ".mpg", ".gif"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -778,6 +778,7 @@ def build_montage(
     max_beats: int,
     beat_mode: float,
     preview: bool,
+    triptych_chance: float,
     triptych_carry: float,
     trim_large_clips: bool,
     pulse_effect: bool,
@@ -898,7 +899,9 @@ def build_montage(
 
                 forced_index += 1
             else:
-                choice = _rng.choice(["landscape", "portrait"])
+                choices = ['landscape', 'portrait']
+                weights = [1.0 - triptych_chance, triptych_chance]
+                choice = _rng.choices(choices, weights=weights, k=1)[0]
 
             if choice == "landscape":
                 if forced_clip_path:
@@ -1817,8 +1820,10 @@ def parse_args(argv=None):
 
     p.add_argument("--preview", choices=["true", "false"], default="true",
                    help="Während des Renderns Preview-JPGs schreiben (true/false, default: true).")
+    p.add_argument('--triptych-chance', type=float, default=0.5,
+                   help='Probability for triptych (portrait clips) 0.0-1.0, default 0.5.')
     p.add_argument("--triptych-carry", type=float, default=0.3,
-                   help="Wahrscheinlichkeit (0.0–1.0), dass das Mittel-Panel des Triptychons vom Seiten-Panel des vorherigen übernommen wird (default: 0.3).")
+                   help="Probability (0.0–1.0) that the center panel of the triptych is inherited from the side panel of the previous one (default: 0.3).")
     p.add_argument("--pulse-effect", action="store_true", help="Beat-Pulse-Effekt aktivieren.")
     p.add_argument("--trim-large-clips", action="store_true", help="Lange Clips nur segmentweise nutzen (default: ganz verwenden).")
     p.add_argument("--fade-out-seconds", type=float, default=0.0, help="Länge des Video-/Audio-Fade-Outs am Ende (Sekunden, 0=aus).")
@@ -1903,7 +1908,8 @@ def parse_args(argv=None):
 
     args.preview = (args.preview.lower() == "true")
 
-    args.triptych_carry = max(0.0, min(1.0, args.triptych_carry))
+    args.triptych_chance = clamp(args.triptych_chance, 0.0, 1.0)
+    args.triptych_carry = clamp(args.triptych_carry, 0.0, 1.0)
 
     args.fade_out_seconds = clamp(args.fade_out_seconds, 0.0, 5.0)
 
@@ -1952,6 +1958,7 @@ def main(argv=None):
             max_beats=args.max_beats,
             beat_mode=args.beat_mode,
             preview=args.preview,
+            triptych_chance=args.triptych_chance,
             triptych_carry=args.triptych_carry,
             pulse_effect=args.pulse_effect,
             trim_large_clips = args.trim_large_clips,

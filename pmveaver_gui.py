@@ -6,7 +6,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 import qdarktheme
 import builtins
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 
 APP_TITLE = "PMVeaver v" + __version__
 
@@ -648,25 +648,17 @@ class PMVeaverQt(QtWidgets.QWidget):
             sb.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
             sb.setMinimumWidth(80)
 
-        lab_w = QtWidgets.QLabel("Width");
+        lab_w = QtWidgets.QLabel("Width")
         lab_w.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        lab_h = QtWidgets.QLabel("Height");
+        lab_h = QtWidgets.QLabel("Height")
         lab_h.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
 
-        g.addWidget(lab_w, 0, 0);
+        g.addWidget(lab_w, 0, 0)
         g.addWidget(self.sb_w, 0, 1)
         g.addWidget(lab_h, 0, 2);
         g.addWidget(self.sb_h, 0, 3)
 
-        self.ds_triptych_carry = QtWidgets.QSpinBox()
-        self.ds_triptych_carry.setRange(0, 100)
-        self.ds_triptych_carry.setSingleStep(5)
-        self.ds_triptych_carry.setValue(30)
-        self.ds_triptych_carry.setSuffix(" %")
-        g.addWidget(QtWidgets.QLabel("Triptych carry"), 1, 0)
-        g.addWidget(self.ds_triptych_carry, 1, 1)
-
-        lab_f = QtWidgets.QLabel("FPS");
+        lab_f = QtWidgets.QLabel("FPS")
         lab_f.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
         g.addWidget(lab_f, 1, 2);
         g.addWidget(self.sb_fps, 1, 3)
@@ -677,6 +669,46 @@ class PMVeaverQt(QtWidgets.QWidget):
         # Keep labels narrow
         for col in (0, 2):
             g.setColumnMinimumWidth(col, 80)
+
+        # Sliders
+        def slider(init, to=100):
+            s = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+            s.setRange(0, to)
+            s.setValue(init)
+            return s
+
+        # Editable numeric fields (display + typing allowed)
+        def dspin(minv, maxv, init, step=1, suffix="%"):
+            ds = QtWidgets.QDoubleSpinBox()
+            ds.setRange(minv, maxv)
+            ds.setDecimals(0)
+            ds.setSingleStep(step)
+            ds.setValue(init)
+            ds.setSuffix(suffix)
+            ds.setFixedWidth(72)
+            return ds
+
+        self.sl_triptych_chance = slider(50)
+        self.ds_triptych_chance = dspin(0, 100, 50)
+
+        # Bidirectional binding (Slider <-> SpinBox)
+        self.sl_triptych_chance.valueChanged.connect(lambda v: self.ds_triptych_chance.setValue(v))
+        self.ds_triptych_chance.valueChanged.connect(lambda val: self.sl_triptych_chance.setValue(int(round(val))))
+
+        # Layout: [Label | Slider | Zahl] x 3 – Slider-Spalten gleich stretchen
+        g.addWidget(QtWidgets.QLabel("Triptych chance"), 2, 0)
+        g.addWidget(self.sl_triptych_chance, 2, 1, 1, 2)
+        g.addWidget(self.ds_triptych_chance, 2, 3)
+
+        self.sl_triptych_carry = slider(30)
+        self.ds_triptych_carry = dspin(0, 100, 30)
+
+        self.sl_triptych_carry.valueChanged.connect(lambda v: self.ds_triptych_carry.setValue(v))
+        self.ds_triptych_carry.valueChanged.connect(lambda val: self.sl_triptych_carry.setValue(int(round(val))))
+
+        g.addWidget(QtWidgets.QLabel("Triptych carry"), 3, 0)
+        g.addWidget(self.sl_triptych_carry, 3, 1, 1, 2)
+        g.addWidget(self.ds_triptych_carry, 3, 3)
 
         return w
     
@@ -1929,6 +1961,7 @@ class PMVeaverQt(QtWidgets.QWidget):
         preset_data = {
             "width": self.sb_w.value(),
             "height": self.sb_h.value(),
+            "triptych-chance": self.ds_triptych_chance.value(),
             "triptych-carry": self.ds_triptych_carry.value(),
             "fps": self.sb_fps.value(),
 
@@ -1995,6 +2028,7 @@ class PMVeaverQt(QtWidgets.QWidget):
             # Set default values
             self.sb_w.setValue(1920)
             self.sb_h.setValue(1080)
+            self.ds_triptych_chance.setValue(50)
             self.ds_triptych_carry.setValue(30)
             self.sb_fps.setValue(30.0)
             self.sl_contrast.setValue(100)
@@ -2029,6 +2063,7 @@ class PMVeaverQt(QtWidgets.QWidget):
 
             self.sb_w.setValue(int(data["width"]))
             self.sb_h.setValue(int(data["height"]))
+            self.ds_triptych_chance.setValue(float(data.get("triptych-chance", 50)))
             self.ds_triptych_carry.setValue(float(data["triptych-carry"]))
             self.sb_fps.setValue(float(data["fps"]))
 
@@ -2400,6 +2435,9 @@ class PMVeaverQt(QtWidgets.QWidget):
             if Path(overlay_path).is_file():
                 args += ["--overlay", overlay_path]
                 args += ["--overlay-opacity", f"{self.sl_overlay_opacity.value() / 100.0:.2f}"]
+
+        if self.sl_triptych_chance.value() != 50.0:
+            args += ["--triptych-chance", f"{self.sl_triptych_chance.value() / 100.0:.2f}"]
 
         return args
 
