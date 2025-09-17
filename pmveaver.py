@@ -566,7 +566,8 @@ class _ClipCache:
     def get(self, path: Path) -> VideoFileClip:
         clip = self._cache.get(path)
         if clip is None:
-            if path.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}:
+            ext = path.suffix.lower()
+            if ext in IMAGE_EXTS:
                 dur = max(0.1, (self._probes.get(path) or ProbeInfo(0, 0, 0, 3.0)).duration or 3.0)
                 clip = ImageClip(str(path)).set_duration(dur)
             else:
@@ -786,6 +787,8 @@ def build_montage(
     saturation: float,
     lut: Optional[Path],
     forced_clips_spec: Optional[str],
+    overlay_path: Optional[Path],
+    overlay_opacity: Optional[float],
 ):
     setup_tempfile_cleanup(out_path)
 
@@ -1026,6 +1029,45 @@ def build_montage(
     # Concatenate (no crossfade)
     montage = concatenate_videoclips(segments, method="chain")
     montage = montage.subclip(0, target_duration).set_fps(fps)
+
+    if overlay_path and overlay_path.exists():
+        ext = overlay_path.suffix.lower()
+        if ext in IMAGE_EXTS:
+            overlay_clip = ImageClip(str(overlay_path)).set_duration(montage.duration)
+        else:
+            overlay_clip = VideoFileClip(str(overlay_path))
+
+        def screen_blend(base_frame, overlay_frame, opacity=1.0):
+            """Custom Screen-Blend: screen(a, b) = 1 - (1 - a) * (1 - b), mit Opacity."""
+
+            def ensure_rgb(frame):
+                if frame.ndim == 2:  # Graustufen (2D) zu RGB (3D) konvertieren
+                    return np.stack([frame] * 3, axis=2)
+                elif frame.ndim == 3 and frame.shape[2] == 3:
+                    return frame
+                else:
+                    raise ValueError(f"Unerwartete Frame-Shape: {frame.shape}")
+
+            base_frame = ensure_rgb(base_frame)
+            overlay_frame = ensure_rgb(overlay_frame)
+
+            base = base_frame.astype(float) / 255.0
+            overlay = overlay_frame.astype(float) / 255.0
+            blended = 1 - (1 - base) * (1 - overlay)
+            blended = (blended * 255).astype(np.uint8)
+
+            return (base_frame * (1 - opacity) + blended * opacity).astype(np.uint8)
+
+        def blend_frame(gf, t):
+            base = gf(t)
+            over = overlay_looped.get_frame(t)
+            return screen_blend(base, over, overlay_opacity)
+
+        loop_count = int(np.ceil(montage.duration / overlay_clip.duration))
+        overlay_looped = concatenate_videoclips([overlay_clip] * loop_count)
+        overlay_looped = overlay_looped.subclip(0, montage.duration)
+
+        montage = montage.fl(blend_frame, apply_to='mask')
 
     # --- Beat-Pulse (Zoom + Blur) ----------------------------------------------
     PULSE_ZOOM_MAX = 0.06  # bis zu +6% Zoom am Beat
@@ -1747,8 +1789,12 @@ def parse_args(argv=None):
     p.add_argument("--trim-large-clips", action="store_true", help="Lange Clips nur segmentweise nutzen (default: ganz verwenden).")
     p.add_argument("--fade-out-seconds", type=float, default=0.0, help="Länge des Video-/Audio-Fade-Outs am Ende (Sekunden, 0=aus).")
 
-    p.add_argument("--intro", type=Path, help="Optionaler Intro-Clip oder -Bild (wird vorangestellt).")
-    p.add_argument("--outro", type=Path, help="Optionaler Outro-Clip oder -Bild (wird angehängt).")
+    p.add_argument("--intro", type=Path, help="Optional intro clip or image (will be prefixed).")
+    p.add_argument("--outro", type=Path, help="Optional outro clip or image (will be appended).")
+    p.add_argument('--overlay', type=Path,
+                   help='Path to the overlay video clip (will be looped and added with screen blend to the montage).')
+    p.add_argument('--overlay-opacity', type=float, default=0.8,
+                   help='Transparency of the overlay (0.0-1.0, default 0.8).')
 
     p.add_argument("--contrast", type=float, default=1.0,
                    help="Contrast (0.1–3.0, 1.0 = neutral)")
@@ -1881,7 +1927,9 @@ def main(argv=None):
             contrast=args.contrast,
             saturation=args.saturation,
             lut=args.lut,
-            forced_clips_spec=args.forced_clips
+            forced_clips_spec=args.forced_clips,
+            overlay_path=args.overlay,
+            overlay_opacity=args.overlay_opacity
         )
 
     except Exception as e:

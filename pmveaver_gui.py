@@ -778,13 +778,31 @@ class PMVeaverQt(QtWidgets.QWidget):
         g.addWidget(lab_fadeout, 3, 3)
         g.addWidget(self.ds_fadeout, 3, 4)
 
+        g.addWidget(QtWidgets.QLabel("Overlay file:"), 4, 0)
+        self.ed_overlay = FileDropLineEdit()
+        g.addWidget(self.ed_overlay, 4, 1, 1, 3)
+        btn_overlay = self.IconButton("\ueb87")
+        btn_overlay.clicked.connect(self._browse_overlay)
+        g.addWidget(btn_overlay, 4, 4)
+
+        self.sl_overlay_opacity = slider(80, 100)
+        self.ds_overlay_opacity = dspin(0, 100, 80)
+
+        # Bidirectional binding (Slider <-> SpinBox)
+        self.sl_overlay_opacity.valueChanged.connect(lambda v: self.ds_overlay_opacity.setValue(v))
+        self.ds_overlay_opacity.valueChanged.connect(lambda val: self.sl_overlay_opacity.setValue(int(round(val))))
+
+        g.addWidget(QtWidgets.QLabel("Overlay opacity"), 5, 0)
+        g.addWidget(self.sl_overlay_opacity, 5, 1, 1, 3)
+        g.addWidget(self.ds_overlay_opacity, 5, 4)
+
         # --- LUT Preview ---
         self.lbl_lut_preview = QtWidgets.QLabel()
         self.lbl_lut_preview.setFixedHeight(110)
         self.lbl_lut_preview.setFrameShape(QtWidgets.QFrame.Panel)
         self.lbl_lut_preview.setFrameShadow(QtWidgets.QFrame.Sunken)
         self.lbl_lut_preview.setAlignment(QtCore.Qt.AlignCenter)
-        g.addWidget(self.lbl_lut_preview, 5, 0, 1, 5)
+        g.addWidget(self.lbl_lut_preview, 6, 0, 1, 5)
 
         # Signale
         self.cb_lut.currentIndexChanged.connect(self._update_lut_preview)
@@ -1662,6 +1680,15 @@ class PMVeaverQt(QtWidgets.QWidget):
 
         self._validate_inputs(False)
 
+    def _browse_overlay(self):
+        start_dir = _norm(self.ed_overlay.text().strip()) or _norm(os.getcwd())
+        f, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select overlay", start_dir,
+                                                     "Video file (*.mp4 *.mov *.m4v *.mkv *.avi *.webm *.mpg *.gif);;Image file (*.jpg *.jpeg *.png *.bmp *.webp);;All files (*.*)")
+        if f:
+            self.ed_overlay.setText(_norm(f))
+
+        self._validate_inputs(False)
+
     def _scan_luts(self):
         """List ./luts/ in working directory and populate LUT selection."""
         lut_dir = Path(_norm(os.path.join(os.getcwd(), "luts")))
@@ -1910,6 +1937,8 @@ class PMVeaverQt(QtWidgets.QWidget):
             "lut": self.cb_lut.itemData(self.cb_lut.currentIndex()),
             "pulse-effect": self.chk_pulse.isChecked(),
             "fade-out-seconds": self.ds_fadeout.value(),
+            "overlay": self.ed_overlay.text(),
+            "overlay-opacity": self.sl_overlay_opacity.value(),
 
             "bg-volume": self.sl_bg.value(),
             "clip-volume": self.sl_clip.value(),
@@ -1972,6 +2001,8 @@ class PMVeaverQt(QtWidgets.QWidget):
             self.sl_saturation.setValue(100)
             self.chk_pulse.setChecked(False)
             self.ds_fadeout.setValue(0.0)
+            self.ed_overlay.setText("")
+            self.sl_overlay_opacity.setValue(80)
             self.sl_bg.setValue(100)
             self.sl_clip.setValue(80)
             self.sl_rev.setValue(20)
@@ -2011,6 +2042,8 @@ class PMVeaverQt(QtWidgets.QWidget):
                     break
             self.chk_pulse.setChecked(bool(data["pulse-effect"]))
             self.ds_fadeout.setValue(float(data["fade-out-seconds"]))
+            self.ed_overlay.setText(str(data.get("overlay", "")))
+            self.ds_overlay_opacity.setValue(float(data.get("overlay-opacity", 80)))
 
             self.sl_bg.setValue(int(data["bg-volume"]))
             self.sl_clip.setValue(int(data["clip-volume"]))
@@ -2289,8 +2322,6 @@ class PMVeaverQt(QtWidgets.QWidget):
             "--codec", self.cb_codec.currentText(),
             "--audio-codec", self.cb_audio.currentText(),
             "--triptych-carry", str(self.ds_triptych_carry.value() / 100.0),
-            "--contrast", f"{self.sl_contrast.value() / 100.0:.2f}",
-            "--saturation", f"{self.sl_saturation.value() / 100.0:.2f}",
         ]
 
         if self.cb_codec_preset.isEnabled() and self.cb_codec_preset.currentText():
@@ -2344,6 +2375,11 @@ class PMVeaverQt(QtWidgets.QWidget):
             if Path(outro_path).is_file():
                 args += ["--outro", outro_path]
 
+        if self.sl_contrast.value() != 100.0:
+            args += ["--contrast", f"{self.sl_contrast.value() / 100.0:.2f}"]
+        if self.sl_saturation.value() != 100.0:
+            args += ["--saturation", f"{self.sl_saturation.value() / 100.0:.2f}"]
+
         if hasattr(self, "cb_lut"):
             idx = self.cb_lut.currentIndex()
             if idx > 0:  # 0 = "(none)"
@@ -2357,6 +2393,13 @@ class PMVeaverQt(QtWidgets.QWidget):
         forced_clips = self._build_forced_clips_arg()
         if forced_clips:
             args += ["--forced-clips", forced_clips]
+
+        overlay_txt = self.ed_overlay.text().strip()
+        if overlay_txt:
+            overlay_path = _norm(overlay_txt)
+            if Path(overlay_path).is_file():
+                args += ["--overlay", overlay_path]
+                args += ["--overlay-opacity", f"{self.sl_overlay_opacity.value() / 100.0:.2f}"]
 
         return args
 
