@@ -55,6 +55,7 @@ import tempfile
 import atexit, signal
 import math
 import threading
+from datetime import timedelta
 
 import numpy as np, time, os
 from pathlib import Path
@@ -874,6 +875,8 @@ def build_montage(
     forced_clips = _parse_forced_clips_spec(forced_clips_spec)
     forced_index = 0
 
+    clip_logs = []
+
     while total < target_duration + 0.01:
         try:
             forced_clip_path: Optional[Path] = None
@@ -937,6 +940,8 @@ def build_montage(
 
                 segments.append(filled)
                 total += filled.duration
+
+                clip_logs.append((src_path, filled.duration))
 
             else:  # choice == "portrait"
                 if forced_clip_path:
@@ -1005,6 +1010,8 @@ def build_montage(
 
                 segments.append(trip)
                 total += trip.duration
+
+                clip_logs.append((str(pathA) + ";" + str(pathB), trip.duration))
 
                 # prepare carry-over for next triptych
                 if triptych_carry:
@@ -1335,6 +1342,33 @@ def build_montage(
         montage_with_preview = montage.fl_image(_preview_writer)
     else:
         montage_with_preview = montage
+
+    intro_duration = 0.0
+    if intro_path is not None and Path(intro_path).exists:
+        intro_duration = intro_clip.duration
+
+    current_time = intro_duration
+
+    log_content = "Clip log for video: {}\n\n".format(out_path)
+    log_content += "Start\tEnd\tClip path\n"
+
+    for clip_path, duration in clip_logs:
+        start_time = timedelta(seconds=current_time)
+        end_time = timedelta(seconds=current_time + duration)
+
+        # Human-readable format (HH:MM:SS)
+        start_str = str(start_time).split('.')[0]
+        end_str = str(end_time).split('.')[0]
+
+        log_content += "{}\t{}\t{}\n".format(start_str, end_str, clip_path)
+        current_time += duration
+
+    log_path = out_path.with_suffix('.log')
+    try:
+        with open(log_path, 'w') as log_file:
+            log_file.write(log_content)
+    except Exception:
+        pass
 
     # Write output
     out_path.parent.mkdir(parents=True, exist_ok=True)
